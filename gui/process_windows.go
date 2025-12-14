@@ -2,6 +2,7 @@ package gui
 
 import (
 	"cron-shot/constants"
+	"cron-shot/logging"
 	"cron-shot/sys_utils"
 	"regexp"
 	"sync"
@@ -136,6 +137,7 @@ func (m *ProcessWindowManager) SetProcess(processName string) {
 
 // pollWindows 定时轮询窗口列表
 func (m *ProcessWindowManager) pollWindows(stopChan chan struct{}) {
+	defer logging.RecoverPanic("pollWindows")
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 

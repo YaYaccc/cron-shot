@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"time"
 )
@@ -80,3 +81,32 @@ func Info(msg string)  { write("INFO", msg) }
 func Error(msg string) { write("ERROR", msg) }
 
 func GetLogDir() string { return logDir }
+
+func RecoverPanic(tag string) {
+	if r := recover(); r != nil {
+		msg := fmt.Sprintf("panic(%s): %v", tag, r)
+		write("PANIC", msg)
+		var buf [8192]byte
+		n := runtime.Stack(buf[:], true)
+		if logFile != nil {
+			_, _ = logFile.WriteString(string(buf[:n]) + "\n")
+			_ = logFile.Sync()
+		} else {
+			dir := logDir
+			if dir == "" {
+				dir = filepath.Join(os.TempDir(), "CronShot_logs")
+			}
+			_ = os.MkdirAll(dir, 0755)
+			ts := time.Now().Format("20060102_150405")
+			path := filepath.Join(dir, fmt.Sprintf("panic_%s.log", ts))
+			f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+			if err == nil {
+				_, _ = f.WriteString(msg + "\n")
+				_, _ = f.Write(buf[:n])
+				_, _ = f.WriteString("\n")
+				_ = f.Sync()
+				_ = f.Close()
+			}
+		}
+	}
+}

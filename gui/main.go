@@ -28,6 +28,7 @@ import (
 
 // Run 启动应用程序主界面与业务逻辑
 func Run() {
+	defer logging.RecoverPanic("gui.Run")
 	myApp := app.New()
 	myApp.Settings().SetTheme(&customTheme{})
 	myApp.SetIcon(GetTrayIconResource())
@@ -38,6 +39,8 @@ func Run() {
 	baseCfg := filepath.Join(cfgDir, "CronShot")
 	_ = logging.Init(baseCfg)
 	logging.Info("config loaded")
+
+	initAutostartRegistration()
 
 	// 初始化各个模块
 	rulesUI := NewRulesUI(myApp)
@@ -284,6 +287,7 @@ func onSettingsButtonTapped(_ fyne.App, autoEnabled *bool, autoStopChanPtr *chan
 
 // startAutoCaptureLoop 周期性根据规则与去重逻辑进行截图保存
 func startAutoCaptureLoop(stop chan struct{}, currentProcess *string, rulesUI *RulesUI, windowStatusUI *WindowStatusUI, dedupeEnabled *bool) {
+	defer logging.RecoverPanic("startAutoCaptureLoop")
 	interval := time.Duration(config.GetScreenshotIntervalSec()) * time.Second
 	if interval <= 0 {
 		interval = time.Second
@@ -397,6 +401,26 @@ func startAutoCaptureLoop(stop chan struct{}, currentProcess *string, rulesUI *R
 	}
 }
 
+// initAutostartRegistration 在启动时根据配置校验并注册开机自启
+// 避免用户替换配置时，启动配置未生效
+func initAutostartRegistration() {
+	app := constants.TextAppTitle
+	if config.GetAutostartEnabled() {
+		exe, _ := os.Executable()
+		ok, v, err := sys_utils.IsAutoStartRegistered(app)
+		if err == nil {
+			if !ok || strings.TrimSpace(v) != exe {
+				_ = sys_utils.EnableAutoStart(app, exe)
+			}
+		}
+	} else {
+		ok, _, err := sys_utils.IsAutoStartRegistered(app)
+		if err == nil && ok {
+			_ = sys_utils.DisableAutoStart(app)
+		}
+	}
+}
+
 // setupSystemTray 初始化系统托盘菜单与图标
 func setupSystemTray(myApp fyne.App, myWindow fyne.Window, processWindowManager *ProcessWindowManager) {
 	if d, ok := myApp.(desktop.App); ok {
@@ -416,6 +440,7 @@ func setupSystemTray(myApp fyne.App, myWindow fyne.Window, processWindowManager 
 // startHideOnMinimize 监听窗口最小化并隐藏到托盘
 func startHideOnMinimize(myWindow fyne.Window) {
 	go func() {
+		defer logging.RecoverPanic("hideOnMinimizeLoop")
 		title := constants.TextAppTitle
 		var hwnd win.HWND
 		for i := 0; i < 20 && hwnd == 0; i++ {
