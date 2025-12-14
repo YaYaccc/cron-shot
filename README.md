@@ -93,7 +93,7 @@ Windows 平台的自动截图工具。按选定进程的窗口周期性截图，
 
 ## 项目信息
 
-- 版本：v1.0.0
+- 版本：v0.0.2
 - 作者：YaYa
 - 项目地址：https://github.com/YaYaccc/cron-shot
 
