@@ -39,6 +39,8 @@ func Run() {
 	_ = logging.Init(baseCfg)
 	logging.Info("config loaded")
 
+	initAutostartRegistration()
+
 	// 初始化各个模块
 	rulesUI := NewRulesUI(myApp)
 	windowStatusUI := NewWindowStatusUI()
@@ -393,6 +395,26 @@ func startAutoCaptureLoop(stop chan struct{}, currentProcess *string, rulesUI *R
 					idx++
 				}
 			}
+		}
+	}
+}
+
+// initAutostartRegistration 在启动时根据配置校验并注册开机自启
+// 避免用户替换配置时，启动配置未生效
+func initAutostartRegistration() {
+	app := constants.TextAppTitle
+	if config.GetAutostartEnabled() {
+		exe, _ := os.Executable()
+		ok, v, err := sys_utils.IsAutoStartRegistered(app)
+		if err == nil {
+			if !ok || strings.TrimSpace(v) != exe {
+				_ = sys_utils.EnableAutoStart(app, exe)
+			}
+		}
+	} else {
+		ok, _, err := sys_utils.IsAutoStartRegistered(app)
+		if err == nil && ok {
+			_ = sys_utils.DisableAutoStart(app)
 		}
 	}
 }
