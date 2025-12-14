@@ -6,6 +6,8 @@ import (
 	"syscall"
 	"unsafe"
 
+	"cron-shot/logging"
+
 	"github.com/lxn/win"
 )
 
@@ -50,6 +52,7 @@ func GetProcessWindowsDetailed(processName string) ([]WindowInfo, error) {
 
 // 枚举回调：过滤窗口可见性与标题后，匹配进程名并收集结果
 func enumCallbackDetailed(hwnd win.HWND, lParam uintptr) uintptr {
+	defer logging.RecoverPanic("enumCallbackDetailed")
 	if !win.IsWindowVisible(hwnd) {
 		return 1
 	}

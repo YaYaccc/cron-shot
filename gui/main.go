@@ -28,6 +28,7 @@ import (
 
 // Run 启动应用程序主界面与业务逻辑
 func Run() {
+	defer logging.RecoverPanic("gui.Run")
 	myApp := app.New()
 	myApp.Settings().SetTheme(&customTheme{})
 	myApp.SetIcon(GetTrayIconResource())
@@ -286,6 +287,7 @@ func onSettingsButtonTapped(_ fyne.App, autoEnabled *bool, autoStopChanPtr *chan
 
 // startAutoCaptureLoop 周期性根据规则与去重逻辑进行截图保存
 func startAutoCaptureLoop(stop chan struct{}, currentProcess *string, rulesUI *RulesUI, windowStatusUI *WindowStatusUI, dedupeEnabled *bool) {
+	defer logging.RecoverPanic("startAutoCaptureLoop")
 	interval := time.Duration(config.GetScreenshotIntervalSec()) * time.Second
 	if interval <= 0 {
 		interval = time.Second
@@ -438,6 +440,7 @@ func setupSystemTray(myApp fyne.App, myWindow fyne.Window, processWindowManager 
 // startHideOnMinimize 监听窗口最小化并隐藏到托盘
 func startHideOnMinimize(myWindow fyne.Window) {
 	go func() {
+		defer logging.RecoverPanic("hideOnMinimizeLoop")
 		title := constants.TextAppTitle
 		var hwnd win.HWND
 		for i := 0; i < 20 && hwnd == 0; i++ {
