@@ -53,3 +53,13 @@ func enumWindows(lpEnumFunc uintptr, lParam uintptr) bool {
 	)
 	return ret != 0
 }
+
+func GetWindowTitleByHWND(hwnd win.HWND) string {
+	tl := getWindowTextLength(hwnd)
+	if tl <= 0 {
+		return ""
+	}
+	buf := make([]uint16, tl+1)
+	getWindowText(hwnd, &buf[0], int32(tl+1))
+	return syscall.UTF16ToString(buf)
+}

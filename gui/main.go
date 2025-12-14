@@ -2,6 +2,7 @@ package gui
 
 import (
 	"fmt"
+	"image"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -302,103 +303,135 @@ func startAutoCaptureLoop(stop chan struct{}, currentProcess *string, rulesUI *R
 			if *currentProcess == "" {
 				continue
 			}
-			logging.Info("start screenshot tick for process: " + *currentProcess)
-			infos, err := sys_utils.GetProcessWindowsDetailed(*currentProcess)
-			if err != nil {
-				logging.Error("GetProcessWindowsDetailed error: " + err.Error())
-				continue
-			}
-			if len(infos) == 0 {
-				logging.Info("process not found: " + *currentProcess)
-				windowStatusUI.UpdateWindows([]string{"(找不到进程)"})
-				continue
-			}
-			rules := rulesUI.Rules
-			base := time.Now()
-			idx := 0
-			for _, info := range infos {
-				matched := false
-				var matchedRule *WindowRule
-				for _, r := range rules {
-					if !r.Enabled {
-						continue
-					}
-					if r.Pattern == info.Title {
-						matched = true
-						matchedRule = &r
-						break
-					}
-				}
-				if !matched {
-					for _, r := range rules {
-						if !r.Enabled {
-							continue
-						}
-						re, err := regexp.Compile(r.Pattern)
-						if err == nil && re.MatchString(info.Title) {
-							matched = true
-							matchedRule = &r
-							break
-						}
-					}
-				}
-				if matched {
-					// 如果窗口最小化，不进行截图
-					if win.IsIconic(info.HWND) {
-						continue
-					}
-					img, err := sys_utils.CaptureWindowImage(info.HWND)
-					if err != nil {
-						logging.Error("capture failed: " + err.Error())
-						continue
-					}
-					folder := info.Title
-					fixed := ""
-					if matchedRule != nil {
-						folder = utils.ResolveStorageFolder(info.Title, matchedRule.StorageRule)
-						fixed = matchedRule.FixedFolder
-					}
-					if *dedupeEnabled {
-						proc := utils.SanitizeProcessName(*currentProcess)
-						sub := utils.SanitizeFolderName(folder)
-						var dir string
-						if strings.TrimSpace(fixed) != "" {
-							fix := utils.SanitizeFolderName(fixed)
-							dir = filepath.Join(config.GetStorageRoot(), proc, fix, sub)
-						} else {
-							dir = filepath.Join(config.GetStorageRoot(), proc, sub)
-						}
-						prevImg, _ := utils.LatestPNGImage(dir)
-						if prevImg != nil {
-							th := config.GetDedupeThreshold()
-							if th >= 100 {
-								if utils.ImagesEqualExact(img, prevImg) {
-									logging.Info("skip save due to identical pixels")
-									continue
-								}
-							} else {
-								prevHash := utils.AHashFromImage(prevImg)
-								currHash := utils.AHash16x16(img)
-								dist := utils.Hamming256(prevHash, currHash)
-								sim := 1.0 - float64(dist)/256.0
-								if sim*100.0 >= float64(th) {
-									logging.Info("skip save due to similarity >= threshold")
-									continue
-								}
-							}
-						}
-					}
-					p, err := sys_utils.SaveCronShot(img, config.GetStorageRoot(), *currentProcess, fixed, folder, base.Add(time.Duration(idx)*time.Millisecond))
-					if err != nil {
-						logging.Error("save failed: " + err.Error())
-					} else {
-						logging.Info("screenshot saved: " + p)
-					}
-					idx++
-				}
-			}
+			processScreenshotTick(*currentProcess, rulesUI.Rules, windowStatusUI, *dedupeEnabled)
 		}
 	}
+}
+
+// processScreenshotTick 执行一次截图循环：获取窗口、规则匹配、截图、去重与保存
+func processScreenshotTick(currentProcess string, rules []WindowRule, windowStatusUI *WindowStatusUI, dedupeEnabled bool) {
+	logging.Info("start screenshot tick for process: " + currentProcess)
+	infos, err := sys_utils.GetProcessWindowsDetailed(currentProcess)
+	if err != nil {
+		logging.Error("GetProcessWindowsDetailed error: " + err.Error())
+		return
+	}
+	if len(infos) == 0 {
+		logging.Info("process not found: " + currentProcess)
+		windowStatusUI.UpdateWindows([]string{"(找不到进程)"})
+		return
+	}
+	base := time.Now()
+	idx := 0
+	for _, info := range infos {
+		// 在匹配前刷新窗口标题：以当前时刻的标题进行规则判断，降低命名偏差
+		titleForMatch := sys_utils.GetWindowTitleByHWND(info.HWND)
+		if strings.TrimSpace(titleForMatch) == "" {
+			// 无法获取到标题名称 跳过
+			continue
+		}
+		rule, ok := matchRule(titleForMatch, rules)
+		if !ok {
+			continue
+		}
+		// 不对最小化窗口进行截图
+		if win.IsIconic(info.HWND) {
+			continue
+		}
+		// 执行截图
+		img, err := sys_utils.CaptureWindowImage(info.HWND)
+		if err != nil {
+			logging.Error("capture failed: " + err.Error())
+			continue
+		}
+		// 截图后再次获取标题，若两次不一致，则表示标题在快速变动，忽略本次截图事件
+		// 否则可能造成存储目的地与预期不一致
+		currTitle := sys_utils.GetWindowTitleByHWND(info.HWND)
+		if strings.TrimSpace(currTitle) != titleForMatch {
+			logging.Info("window title drift: " + titleForMatch + " -> " + currTitle)
+			continue
+		}
+		// 使用匹配时刻的标题计算存储文件夹，保证规则与命名一致
+		folder, fixed := resolveFolder(titleForMatch, rule)
+		if dedupeEnabled && shouldSkipDueToDedupe(img, config.GetStorageRoot(), currentProcess, fixed, folder) {
+			continue
+		}
+		p, err := sys_utils.SaveCronShot(img, config.GetStorageRoot(), currentProcess, fixed, folder, base.Add(time.Duration(idx)*time.Millisecond))
+		if err != nil {
+			logging.Error("save failed: " + err.Error())
+		} else {
+			logging.Info("screenshot saved: " + p)
+		}
+		idx++
+	}
+}
+
+// matchRule 进行规则匹配：先精确匹配，再进行正则匹配
+func matchRule(title string, rules []WindowRule) (*WindowRule, bool) {
+	for _, r := range rules {
+		if !r.Enabled {
+			continue
+		}
+		if r.Pattern == title {
+			return &r, true
+		}
+	}
+	for _, r := range rules {
+		if !r.Enabled {
+			continue
+		}
+		re, err := regexp.Compile(r.Pattern)
+		if err == nil && re.MatchString(title) {
+			return &r, true
+		}
+	}
+	return nil, false
+}
+
+// resolveFolder 解析存储文件夹名称与固定前缀
+func resolveFolder(title string, rule *WindowRule) (string, string) {
+	if rule == nil {
+		return title, ""
+	}
+	folder := utils.ResolveStorageFolder(title, rule.StorageRule)
+	return folder, rule.FixedFolder
+}
+
+// shouldSkipDueToDedupe 执行去重判定：
+// - 构造目标保存目录并读取最新图片
+// - 当阈值=100时用像素级比较；否则用 AHash16x16 + 汉明距离转换相似度
+// - 返回 true 表示应跳过保存
+func shouldSkipDueToDedupe(img *image.RGBA, storageRoot, processName, fixed, folder string) bool {
+	proc := utils.SanitizeProcessName(processName)
+	sub := utils.SanitizeFolderName(folder)
+	var dir string
+	if strings.TrimSpace(fixed) != "" {
+		fix := utils.SanitizeFolderName(fixed)
+		dir = filepath.Join(storageRoot, proc, fix, sub)
+	} else {
+		dir = filepath.Join(storageRoot, proc, sub)
+	}
+	prevImg, _ := utils.LatestPNGImage(dir)
+	if prevImg == nil {
+		return false
+	}
+	th := config.GetDedupeThreshold()
+	if th >= 100 {
+		if utils.ImagesEqualExact(img, prevImg) {
+			logging.Info("skip save due to identical pixels")
+			return true
+		}
+		return false
+	}
+	prevHash := utils.AHashFromImage(prevImg)
+	currHash := utils.AHash16x16(img)
+	dist := utils.Hamming256(prevHash, currHash)
+	sim := 1.0 - float64(dist)/256.0
+	if sim*100.0 >= float64(th) {
+		logging.Info("skip save due to similarity >= threshold")
+		return true
+	}
+	return false
 }
 
 // initAutostartRegistration 在启动时根据配置校验并注册开机自启
