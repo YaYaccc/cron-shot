@@ -125,7 +125,7 @@ func Run() {
 
 	aboutBtn := widget.NewButton(constants.TextAbout, func() {
 		w := NewSingletonWindow(constants.TextAbout)
-		l1 := widget.NewLabel("版本:v0.0.2")
+		l1 := widget.NewLabel("版本:v0.0.3")
 		l2 := widget.NewLabel("作者:YaYa")
 		u, _ := url.Parse("https://github.com/YaYaccc/cron-shot")
 		rowProject := widget.NewRichText(&widget.TextSegment{Text: "项目地址:"}, &widget.HyperlinkSegment{Text: "https://github.com/YaYaccc/cron-shot", URL: u})
